@@ -129,18 +129,9 @@ class Dashboard:
         """Update the data from the vital signs API"""
         self.data.update(new_data)
 
-    def check_alarms(self):
-        """Check for patients that need alarms"""
-        for patient_id, vital_signs in self.data.items():
-            if vital_signs:
-                data = np.array(list(vital_signs.values()))
-                input_data = data[:-1].reshape(-1, 1).astype(float)
-                should_alarm = self.model.predict(input_data)
-
-                if should_alarm[0] == 1:
-                    # Alarm detected
-                    self.notify_clinicians(patient_id)
-                    return patient_id
+    def check_alarms(self, patient_id, should_alarm):
+        if should_alarm[0] == 1:
+            print(patient_id + "needs assitence")
         return None
     def start(self, api):
         """Start monitoring loop"""
@@ -157,44 +148,36 @@ class Dashboard:
 
             sleep(5)  # Wait 5 seconds
 def main():
-    # Connect to hospital API
-    client = HospitalAPIClient()
-    api = client.connect()
-
     db = DBHandler()
-    csv = CSVHandler()
+    csv_raw_data = CSVHandler()
+    csv_prediction = CSVHandler()
     dashboard = Dashboard()
 
-    csv.initialize_raw_data_csv_file()
-    csv.initialize_predictions_csv_file()
+    csv_raw_data.initialize_raw_data_csv_file()
+    csv_prediction.initialize_predictions_csv_file()
+
+    # Connect to hospital API
+    client = HospitalAPIClient()
+    client.connect()
 
     # Create alarm model
     model = ICUZen()
 
-    #dashboard.start(api)
-
-    # Save raw data
-    csv.save_raw_data_to_csv(client.convert_patient_list_to_dict(client.read_history()))
+    """Check for patients that need alarms"""
     while True:
         raw_data = client.read_all()
-        csv.save_raw_data_to_csv(raw_data)
-        #save_vital_signs(raw_data)
-
-        # Predict alarm
-        #dashboard.check_alarms()
+        csv_raw_data.save_raw_data_to_csv(raw_data)
         for patient_id, vital_signs in raw_data.items():
             # Only use non-empty data
             if vital_signs:
-                print(vital_signs)
                 data = np.array(list(vital_signs.values()))
                 input_data = data[:-1].reshape(-1, 1).astype(float)
                 should_alarm = model.predict(input_data)
-                print(should_alarm, should_alarm.shape)
+                dashboard.check_alarms(patient_id, should_alarm)
 
                 # Save predictions
-                csv.save_prediction(patient_id, should_alarm)
-
-
+                csv_prediction.save_prediction(patient_id, should_alarm)
+        sleep(1)
 
 
 if __name__ == "__main__":
