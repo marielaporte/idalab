@@ -4,7 +4,7 @@ import json
 from flask import Flask, request, jsonify
 from kafka import KafkaProducer
 
-from model import ICUZen
+from model.model import ICUZen
 
 app = Flask(__name__)
 producer = KafkaProducer(bootstrap_servers=['localhost:9092'])
@@ -29,7 +29,7 @@ def get_patients():
     # Read patients from file
     patients = []
 
-    with open('secured/raw_data.csv.enc') as f:
+    with open('../hospital/data/raw_data.csv') as f:
         reader = csv.reader(f)
 
         # Skip header row

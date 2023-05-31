@@ -1,27 +1,33 @@
-import ssl
 from time import sleep
 
 import psycopg2
 import os
 import csv
 import numpy as np
-from django.core.mail import send_mail
 
-from hospital_api_client import HospitalAPIClient
-from model import ICUZen
+from hospital.api_client.hospital_api_client import HospitalAPIClient
+from model.model import ICUZen
 
 
 class DBHandler:
-    """Handles database connections and queries"""
+    """Handles database connections and queries
+    Note: This class is currently not linked to any database, but is already implemented."""
+
     def connect(self):
+        """Connects to a PostgreSQL database
+        Returns a database connection object"""
+
         conn = psycopg2.connect(host="localhost",
                                 database="db",
                                 user="user",
                                 password="password",
                                 sslmode="require")
 
+        return conn
 
     def create_patient_table(self):
+        """Creates a 'patients' table in the database with the required columns"""
+
         conn = self.connect()
         cur = conn.cursor()
 
@@ -41,10 +47,15 @@ class DBHandler:
         conn.close()
 
     def connect(self):
+        """Initializes a connection to the Hospital API
+        Returns a client object for making API requests"""
+
         client = HospitalAPIClient()
         client.connect()
 
     def save_data(self, data):
+        """Saves patient vital sign data to the 'patients' table in the database"""
+
         conn = self.connect()
         cur = conn.cursor()
 
@@ -81,13 +92,12 @@ class DBHandler:
                     ))
 
 class CSVHandler:
-    def initialize_raw_data_csv_file(self):
-        # Encrypted CSV file
-        filepath = "secured/raw_data.csv.enc"
 
-        # Create encrypted file
-        os.system(f"openssl aes-256-cbc -e -in raw_data.csv -out {filepath}"
-              "-k secret")
+    def initialize_raw_data_csv_file(self):
+        """Initializes the raw data CSV file with a header row
+        The file is located in the 'hospital/data' directory"""
+
+        filepath = "hospital/data/raw_data.csv"
 
         with open(filepath, mode='w', newline='') as file:
             writer = csv.writer(file)
@@ -96,16 +106,32 @@ class CSVHandler:
                 ['patient_id', 'body_temperature', 'blood_pressure_systolic', 'blood_pressure_diastolic', 'heart_rate',
                 'respiratory_rate', 'timestamp'])
 
+
+
+
     def initialize_predictions_csv_file(self):
-        with open('secured/predictions.csv.enc', mode='w', newline='') as file:
+        """Initializes the predictions CSV file with a header row
+            The file is located in the 'hospital/data' directory"""
+
+        with open('hospital/data/predictions.csv', mode='w', newline='') as file:
             writer = csv.writer(file)
             # Write the header row
             writer.writerow(
                 ['patient_id', 'body_temperature', 'blood_pressure_systolic', 'blood_pressure_diastolic', 'heart_rate',
                  'respiratory_rate'])
 
+
+
+
     def save_raw_data_to_csv(self, data):
-        with open('secured/raw_data.csv.enc', mode='a', newline='') as file:
+        """Saves a dictionary of patient vital sign data to a CSV file
+            The data is encrypted, and the file is located in the 'hospital/data' directory
+
+            Args:
+                data (dict): A dictionary of patient vital sign data, where the keys are patient IDs and the values are dictionaries
+                            containing the vital sign measurements and timestamps"""
+
+        with open('hospital/data/raw_data.csv', mode='a', newline='') as file:
             writer = csv.writer(file)
             # Write the data rows
             for patient_id, vital_signs in data.items():
@@ -113,71 +139,83 @@ class CSVHandler:
                                  vital_signs['blood_pressure_diastolic'], vital_signs['heart_rate'],
                                  vital_signs['respiratory_rate'], vital_signs['timestamp']])
 
-    # Save raw prediction
     def save_prediction(self, patient_id, should_alarm):
-        with open('secured/predictions.csv.enc', 'a') as f:
+        """Saves the prediction results for the given patient to a CSV file
+            The predictions are encrypted, and the file is located in the 'hospital/data' directory
+            The function appends a new row to the end of the file, with the patient ID and the five prediction values
+
+            Args:
+               patient_id (str): The ID of the patient for whom the prediction was made
+               should_alarm (list): A list of five Boolean values indicating whether an alarm should be raised for each observation"""
+
+        with open('hospital/data/predictions.csv', 'a') as f:
             writer = csv.writer(f)
             writer.writerow([patient_id, should_alarm[0], should_alarm[1], should_alarm[2], should_alarm[3], should_alarm[4]])
 
 
 class Dashboard:
+    """Handles the dashboard functionality for the ICUZen application"""
 
     def __init__(self):
+        # Initializes the dashboard object
         self.data = {}
 
-    def update_data(self, new_data):
-        """Update the data from the vital signs API"""
-        self.data.update(new_data)
+        # Creates backup CSV files
+        self.csv_raw_data = CSVHandler()
+        self.csv_prediction = CSVHandler()
 
-    def check_alarms(self, patient_id, should_alarm):
+        # Connects to hospital API
+        self.client = HospitalAPIClient()
+
+        # Creates an instance of the alarm model
+        self.model = ICUZen()
+
+
+    def initialize(self):
+        # Initializes the backup CSV files and connects to the hospital API
+        self.csv_raw_data.initialize_raw_data_csv_file()
+        self.csv_prediction.initialize_predictions_csv_file()
+
+        # Connects to the hospital API
+        client = HospitalAPIClient()
+        client.connect()
+
+
+    def check_alarm(self, patient_id, should_alarm):
+        """Checks if the given patient needs assistance based on the model's prediction"""
         if should_alarm[0] == 1:
-            print(patient_id + "needs assitence")
+            self.notify_clinicians(patient_id)
         return None
-    def start(self, api):
-        """Start monitoring loop"""
+
+
+    def notify_clinicians(self, patient_id):
+        """Notifies clinicians that the given patient needs assistance
+        Note: Could be implemented in a messaging system"""
+
+        print(f"{patient_id} needs assistance")
+
+
+    def run(self):
+        """Runs the dashboard loop, reading data from the Hospital API and making predictions"""
+
         while True:
-            # Get new data
-            if api:
-                new_data = api.read_all()
+            raw_data = self.client.read_all()
+            self.csv_raw_data.save_raw_data_to_csv(raw_data)
 
-            # Update data
-            #self.update_data(new_data)
+            for patient_id, vital_signs in raw_data.items():
+                if vital_signs:
+                    data = np.array(list(vital_signs.values()))
+                    input_data = data[:-1].reshape(-1, 1).astype(float)
+                    should_alarm = self.model.predict(input_data)
+                    self.check_alarm(patient_id, should_alarm)
 
-            # Check for alarms
-            self.check_alarms()
-
-            sleep(5)  # Wait 5 seconds
+                    # Save predictions
+                    self.csv_prediction.save_prediction(patient_id, should_alarm)
+            sleep(1)
 def main():
-    db = DBHandler()
-    csv_raw_data = CSVHandler()
-    csv_prediction = CSVHandler()
     dashboard = Dashboard()
-
-    csv_raw_data.initialize_raw_data_csv_file()
-    csv_prediction.initialize_predictions_csv_file()
-
-    # Connect to hospital API
-    client = HospitalAPIClient()
-    client.connect()
-
-    # Create alarm model
-    model = ICUZen()
-
-    """Check for patients that need alarms"""
-    while True:
-        raw_data = client.read_all()
-        csv_raw_data.save_raw_data_to_csv(raw_data)
-        for patient_id, vital_signs in raw_data.items():
-            # Only use non-empty data
-            if vital_signs:
-                data = np.array(list(vital_signs.values()))
-                input_data = data[:-1].reshape(-1, 1).astype(float)
-                should_alarm = model.predict(input_data)
-                dashboard.check_alarms(patient_id, should_alarm)
-
-                # Save predictions
-                csv_prediction.save_prediction(patient_id, should_alarm)
-        sleep(1)
+    dashboard.initialize()
+    dashboard.run()
 
 
 if __name__ == "__main__":
